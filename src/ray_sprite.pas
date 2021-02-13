@@ -5,7 +5,7 @@ unit ray_sprite;
 interface
 
 uses
- ray_headers, Classes;
+ ray_headers, Classes, SysUtils;
 
 type
  TCollideMode = (cmRecs, cmCircles, cmCircleRec, cmPointRec, cmPointCircle, cmPointTriangle, cmLines);
@@ -38,6 +38,66 @@ type
    property WorldY: Single read FWorld.Y write SetWorldY;
   end;
 
+ { TRay2DEngineHex }
+ type TPointType = (ptRowCol,ptXY); { Used in the Convertcoords function }
+
+  TRay2DEngineHex = class (TRay2DEngine)
+   private
+     FCamera: TCamera2d;
+     FHexColor: TColor;
+     FHexColumns: Integer;
+     FHexMapOn: Boolean;
+     FHexRadius: Integer;
+     FHexRows: Integer;
+     FHexShowLabels: Boolean;
+     FLineColor: TColor;
+     FXorRow: Integer;
+     FYorCol: Integer;
+
+     Rise:integer; {Distance from center to top of hex, need to compute each}
+     function findrange(Bpoint:Tpoint;Epoint:TPoint):Integer;
+     procedure SetHexColor(AValue: TColor);
+     procedure SetHexColumns(AValue: Integer);
+     procedure SetHexGrid(AValue: Boolean);
+     procedure SetHexRadius(AValue: Integer);
+     procedure SetHexRows(AValue: Integer);
+     procedure SetHexShowLabels(AValue: Boolean);
+     procedure MakeSolidMap;
+     procedure SetLineColor(AValue: TColor);
+     procedure DrawSolidHex(Fillcolor : TColor;      { Color to fill it }
+                            LineColor : Tcolor;      { What color for lines }
+                            x,y,radius: integer);     { Position and size of Hex }
+
+   public
+     constructor Create;
+     destructor Destroy; override;
+     procedure Draw();
+     procedure Move(TimeGap: Double);
+          {returns the range in hexes from Bpoint to EPoint}
+     function RangeInHexes(Bpoint:Tpoint;Epoint:TPoint):Integer;
+     procedure PaintAHex(HexColorWanted : TColor;MapLocation:TPoint);
+     function ConvertCoords(point:Tpoint; pointtype:Tpointtype):Tpoint;
+
+
+     property HexColor: TColor read FHexColor write SetHexColor;
+     property LineColor: TColor read FLineColor write SetLineColor;
+
+     property XorRow: Integer read FXorRow write FXorRow;
+     property YorCol: Integer read FYorCol write FYorCol;
+
+     property Camera: TCamera2d read FCamera write FCamera;
+
+   published
+
+     property MapGridOn: Boolean read FHexMapOn write SetHexGrid;
+     property HexColumns: Integer read FHexColumns write SetHexColumns;
+     property HexRows: Integer read FHexRows write SetHexRows;
+     property HexRadius: Integer read FHexRadius write SetHexRadius;
+     property HexShowLabels: Boolean read FHexShowLabels write SetHexShowLabels;
+
+
+ end;
+
    TPattern = record
     Height, Width: Integer;
   end;
@@ -58,13 +118,14 @@ type
 
    TRaySprite = class
   private
+    FDoCollision: Boolean;
     FAnimated: Boolean;
     FCollideCircle: TCircle;
     FCollideMode: TCollideMode;
     FCollidePoint: TVector2;
     FCollideRecs: TRectangle;
     FCollisioned: Boolean;
-    FdbgCollide: Boolead;
+    FdbgCollide: Boolean;
     FVector: TVector3;
     FZ: Single;
     FScale: Single;
@@ -93,7 +154,7 @@ type
 
     constructor Create(Engine: TRay2DEngine; Texture: TRayTexture); virtual;
     destructor Destroy; override;
-    property dbgCollide: Boolead read FdbgCollide write FdbgCollide;
+    property dbgCollide: Boolean read FdbgCollide write FdbgCollide;
     property CollideRecs: TRectangle read FCollideRecs write FCollideRecs;
     property CollideCircle: TCircle read FCollideCircle write FCollideCircle;
     property CollidePoint: TVector2 read FCollidePoint write FCollidePoint;
@@ -139,6 +200,284 @@ type
 
 
 implementation
+
+{ TRay2DEngineHex }
+
+procedure TRay2DEngineHex.SetHexColumns(AValue: Integer);
+begin
+  if FHexColumns=AValue then Exit;
+  FHexColumns:=AValue;
+end;
+
+function TRay2DEngineHex.findrange(Bpoint: Tpoint; Epoint: TPoint): Integer;
+ var
+  bdx, bdy:integer;
+  edx, edy:integer;
+  AddToX:Boolean;
+  HexCount:Integer;
+  GoalReached:Boolean;
+  loopcount:integer;
+  StopX, StopY:Boolean;
+ begin
+  loopcount:=HexColumns * Hexrows;
+  AddToX:=False;
+  HexCount:=0;
+  GoalReached := False;
+  StopX:=False;
+  StopY:=False;
+  {bpoint is position you clicked on}
+  if Bpoint.y>Epoint.y
+   then
+    begin
+     bdy:=Bpoint.y;
+     bdx:=Bpoint.x;
+     edy:=Epoint.y;
+     edx:=Epoint.x;
+     if bdx<edx then AddToX := True;
+    end
+   else
+    begin
+     bdy:=Epoint.y;
+     bdx:=Epoint.x;
+     edy:=Bpoint.y;
+     edx:=Bpoint.x;
+     if bdx<edx then AddToX := True;
+    end;
+  Repeat
+   begin
+    dec(loopcount);
+    if not odd(bdx) then
+     begin
+      inc(HexCount);
+      if bdx<>edx then
+       begin
+        if addtox = true then bdx:=bdx+1;
+        if addtox = false then bdx:=bdx-1;
+        if bdx=edx then StopX:=True;
+       end
+      else
+       if bdy<>edy then bdy:=bdy-1;
+     end
+    else
+     begin
+      inc(HexCount);
+      if bdx<>edx then
+       begin
+        if addtox = true then bdx:=bdx+1;
+        if addtox = false then bdx:=bdx-1;
+        if bdx=edx then StopX:=True;
+       end;
+      if bdy<>edy then bdy:=bdy-1;
+      if bdy=edy then StopY:=True;
+     end;
+   end;
+  if (bdx=edx) and (bdy=edy) then GoalReached:=True;
+  until (GoalReached = True) or (loopcount<=0);
+  findrange:=abs(HexCount);
+ end;
+
+
+procedure TRay2DEngineHex.SetHexColor(AValue: TColor);
+begin
+ // if FHexColor=AValue then Exit;
+  FHexColor:=AValue;
+end;
+
+procedure TRay2DEngineHex.SetHexGrid(AValue: Boolean);
+begin
+  if FHexMapOn=AValue then Exit;
+  FHexMapOn:=AValue;
+end;
+
+procedure TRay2DEngineHex.SetHexRadius(AValue: Integer);
+begin
+  if FHexRadius=AValue then Exit;
+  FHexRadius:=AValue;
+end;
+
+procedure TRay2DEngineHex.SetHexRows(AValue: Integer);
+begin
+  if FHexRows=AValue then Exit;
+  FHexRows:=AValue;
+end;
+
+procedure TRay2DEngineHex.SetHexShowLabels(AValue: Boolean);
+begin
+  if FHexShowLabels=AValue then Exit;
+  FHexShowLabels:=AValue;
+end;
+
+procedure TRay2DEngineHex.MakeSolidMap;
+var
+ p0:tpoint;
+ looprow,loopcol:integer;
+ hex_id : string;
+begin
+
+  {draw hexes left to right / top to bottom}
+     for looprow := 1 to HexRows do
+      begin
+       for loopcol := 1 to HexColumns do
+        begin
+         {compute center coordinates}
+        p0 := convertcoords(point(Loopcol,Looprow),ptROWCOL);
+         {draw the hex}
+         if MapGridOn = True then drawsolidhex(hexcolor,linecolor,p0.x,p0.y,hexradius);
+         {If desired, draw label for hex}
+         if HexShowLabels = true then
+         begin
+           hex_id := format('%.2d%.2d',[loopcol,looprow]);
+           DrawText(PChar(hex_id),P0.x - Round(TextLength(Pchar(hex_id)) div 2)  ,
+           P0.Y - Round(TextLength(Pchar(hex_id)) div 2),
+           10, Red);
+         end;
+        end;
+      end;
+end;
+{******************************************************************************}
+{  This function will return the Row / Col pair based on a given X/Y
+   for a using application that calls it}
+function TRay2DEngineHex.ConvertCoords(point: Tpoint; pointtype: Tpointtype
+  ): Tpoint;
+var
+  temp:TPoint;
+begin
+  case PointType of
+     ptXY: {Convert from x/y to Row/Col}
+     Begin
+       temp.x:= round( (point.x + (HexRadius/2) ) / (1.5 * Hexradius));
+       if odd(temp.x) then
+          temp.y := round( (point.y + rise) / (rise*2))
+       else
+          temp.y := round( point.y  / (2*rise));
+
+       { This section insures row / col is good}
+      if (temp.x < 1) or (temp.y < 1) then
+         begin
+           temp.x := 0;
+           temp.y := 0;
+          end
+       else if (temp.y > HexRows) or (temp.x > HexColumns) then
+         begin
+           temp.y := 0;
+           temp.x := 0;
+         end;
+       ConvertCoords := temp;
+     end;
+
+     ptRowCol:  { Converts Row/Col to X/Y }
+     begin
+       if point.x=1 then
+        temp.x:= HexRadius
+       else
+        temp.x := HexRadius+(point.x-1) * (round(1.5 * hexradius));
+       if odd(point.x) then
+        if point.y=1 then
+           temp.y:= rise
+        else
+           temp.y := rise+(point.y-1) * (2 * rise)
+       else
+         temp.y := (point.y * (2*rise));
+      ConvertCoords := temp;
+     end;
+
+   end;
+end;
+
+procedure TRay2DEngineHex.DrawSolidHex(Fillcolor: TColor; LineColor: Tcolor; x,
+  y, radius: integer);
+var
+  p0:TVector2;
+begin
+   p0 := Vector2create(x,y);
+   DrawPoly(Vector2create(x,y), 6, Radius, 30, FHexColor);
+   DrawPolyLines(P0, 6, Radius, 30, FLineColor);
+end;
+
+procedure TRay2DEngineHex.SetLineColor(AValue: TColor);
+begin
+  FLineColor := AValue;
+end;
+
+constructor TRay2DEngineHex.Create;
+begin
+  inherited Create;
+   FHexMapOn := True;
+   FHexColumns := 9;
+   FHexRows := 9;
+   FHexRadius := 64;
+   FHexShowLabels := False;
+   FHexColor := Gray;
+   FLineColor := Black;
+
+   rise := round(Sqrt(sqr(FHexRadius)-sqr(FhexRadius/2)));
+
+   MakeSolidMap;
+end;
+
+destructor TRay2DEngineHex.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TRay2DEngineHex.Draw();
+var position :tpoint;
+begin
+  MakeSolidMap;
+
+end;
+
+procedure TRay2DEngineHex.Move(TimeGap: Double);
+var position :tpoint;
+    posVec:TVector2;
+begin
+//   FCamera
+
+   position := self.convertcoords(point(GetMouseX+Round(Self.WorldX),
+   GetMouseY+Round(Self.WorldY)),ptXY);
+
+
+   FXorRow:= Position.X;
+   FYorCol:= Position.Y;
+end;
+
+{******************************************************************************}
+{This function will return the range in hexes between a starting hex
+ point and a ending hex point for a using application that calls it}
+function TRay2DEngineHex.RangeInHexes(Bpoint: Tpoint; Epoint: TPoint): Integer;
+var
+ dx, tdx, tempdx:integer;
+ dy:integer;
+ dist:integer;
+begin
+  {if it's in the same column or row}
+  if (Epoint.x-Bpoint.x = 0) or (Epoint.y-Bpoint.y = 0)
+  then
+   Begin
+    dx:=Epoint.x-Bpoint.x;
+    dy:=Epoint.y-Bpoint.y;
+    dist:=abs(dx)+abs(dy);
+   end
+ else
+  begin
+    {it's not in the same column or row}
+    dist:=findrange(Bpoint, Epoint);
+  end;
+ RangeInHexes := dist;
+end;
+
+
+procedure TRay2DEngineHex.PaintAHex(HexColorWanted: TColor; MapLocation: TPoint
+  );
+var
+ p0:tpoint;
+begin
+ if FHexMapOn then
+  begin
+   p0 := convertcoords(point(MapLocation.x,MapLocation.y),ptROWCOL);
+   drawsolidhex(GREEN,linecolor,P0.X,P0.Y,hexradius div 2);
+  end;
+end;
 
 { TRayAnimatedSprite }
 
@@ -204,10 +543,10 @@ begin
       (X < FEngine.WorldX + FEngine.VisibleWidth) and
       (Y < FEngine.WorldY + FEngine.VisibleHeight) then
     begin
-     Scales:=FScale;
-     Origin:=Vector2Create (FPatternWidth/2*Scale,FPatternHeight/2*Scale);
+     Origin:=Vector2Create (FPatternWidth/2,FPatternHeight/2);
+      Scales:=FScale;
 
-     Source:=SetPattern(FTexture.Texture[FTextureIndex],FPatternIndex,
+      Source:=SetPattern(FTexture.Texture[FTextureIndex],FPatternIndex,
      Round(FPatternWidth), Round(FPatternHeight));
 
       Dest:=RectangleCreate(
@@ -215,8 +554,16 @@ begin
       Y+FPatternHeight/2*scale,
       FPatternWidth*scale,FPatternHeight*scale);
 
-      DrawTextureTiled(FTexture.Texture[FTextureIndex],Source,Dest,Origin,Angle,Scales,White);
-     end;
+            if FdbgCollide then
+    case CollideMode of
+      cmRecs:DrawRectanglePro(Dest,Origin,Angle,RED);
+    end;
+       DrawTextureTiled(FTexture.Texture[FTextureIndex],Source,Dest,Origin,Angle,Scales,White);
+//       DrawLineBezier(Origin,GetMousePosition,2,RED);
+    end;
+
+
+
     end;
 end;
 
@@ -333,6 +680,9 @@ begin
       (X < FEngine.WorldX + FEngine.VisibleWidth) and
       (Y < FEngine.WorldY + FEngine.VisibleHeight) then
       begin
+
+
+
       Scales:=FScale;
       Origin:=Vector2Create(FTexture.Texture[FTextureIndex].Width/2*scale,FTexture.Texture[FTextureIndex].Height/2*scale);
       Source:=RectangleCreate(0,0,FTexture.Texture[FTextureIndex].Width*scale,  FTexture.Texture[FTextureIndex].Height*scale);
@@ -343,13 +693,13 @@ begin
       FTexture.Texture[FTextureIndex].Width*scale,FTexture.Texture[FTextureIndex].Height*scale);
       DrawTextureTiled(FTexture.Texture[FTextureIndex],Source,Dest,Origin,Angle,Scales,White);
       end;
-     if FdbgCollide then
-    case CollideMode of
-      cmRecs:DrawRectangleRec(Self.CollideRecs,RED):
 
+          if FdbgCollide then
+     case CollideMode of
+      cmRecs:DrawRectangleRec(Self.CollideRecs,RED);
     end;
-
    end;
+
 end;
 
 procedure TRaySprite.DoMove(TimeGap: Double);
@@ -388,7 +738,7 @@ begin
   begin
    case FCollideMode of
     cmRecs: isCollide := CheckCollisionRecs(Self.CollideRecs,Other.CollideRecs);
-    cmCircles: isCollide := CheckCollisionCircles(Self.CollideCircle.Center,Self.CollideCircle.Radius,Other.CollideCircle.Center,Other.CollideCircle.Radius):
+    cmCircles: isCollide := CheckCollisionCircles(Self.CollideCircle.Center,Self.CollideCircle.Radius,Other.CollideCircle.Center,Other.CollideCircle.Radius);
     cmCircleRec: isCollide:= CheckCollisionCircleRec(Self.CollideCircle.Center,Self.CollideCircle.Radius,Other.CollideRecs);
     cmPointRec: isCollide := CheckCollisionPointRec(Self.CollidePoint,Other.CollideRecs);
     cmPointCircle: isCollide := CheckCollisionPointCircle(Self.CollidePoint,Other.CollideCircle.Center,Other.CollideCircle.Radius);
@@ -411,10 +761,13 @@ var
 begin
   if (FEngine <> nil) and (not IsSpriteDead) and (Collisioned) then
   begin
-    for I := 0 to Engine.FList.Count - 1 do
-    Self.Collision(Engine.FList.Items[I]);
-  end;
+ for I := 0 to FEngine.Flist.Count - 1 do
 
+   Self.Collision(TRaySprite(FEngine.FList.Items[I]));
+ //Self.Collision(FEngine.Items[I]);
+
+// TRayAnimatedSprite(FList.Items[i]).Draw;
+  end;
 end;
 
 constructor TRaySprite.Create(Engine: TRay2DEngine; Texture: TRayTexture);
@@ -499,6 +852,9 @@ begin
       TRaySprite(FList.Items[i]).Draw
     else
      TRayAnimatedSprite(FList.Items[i]).Draw;
+
+
+
   end;
 end;
 
